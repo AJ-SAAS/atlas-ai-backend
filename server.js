@@ -9,7 +9,7 @@ app.post("/atlas", async (req, res) => {
   const query = req.body.query;
 
   const prompt = `
-Return ONLY valid JSON:
+Return ONLY valid JSON. No markdown. No explanation.
 
 {
   "title": "",
@@ -48,12 +48,24 @@ Query: ${query}
     });
 
     const data = await response.json();
-    const content = data.choices[0].message.content;
+    let content = data.choices[0].message.content;
 
-    res.json(JSON.parse(content));
+    // 🧠 SAFETY CLEANING (IMPORTANT)
+    content = content.replace(/```json/g, "").replace(/```/g, "");
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      console.log("❌ JSON PARSE FAILED:", content);
+      return res.status(500).json({ error: "Bad AI JSON" });
+    }
+
+    res.json(parsed);
 
   } catch (err) {
-    console.log(err);
+    console.log("❌ SERVER ERROR:", err);
     res.status(500).json({ error: "Failed" });
   }
 });
