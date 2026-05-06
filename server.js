@@ -8,45 +8,45 @@ app.use(express.json());
 app.post("/atlas", async (req, res) => {
   const query = req.body.query;
 
-  // 🔍 Debug: incoming request
   console.log("QUERY:", query);
 
   const prompt = `
 You are AtlasAI.
 
-You MUST return strictly valid JSON.
+Return strictly valid JSON.
+
+GOAL:
+Make the result fascinating, visual, and slightly surprising.
 
 RULES:
 - No markdown
 - No explanations
-- No text outside JSON
+- 6 to 9 nodes REQUIRED
+- Chain must feel like a story
+- Include at least one unexpected step
+- Use REAL countries (accurate geography)
 - No trailing commas
 - All keys must use double quotes
-- Use EXACT structure below
 - edges MUST use "from" and "to"
-- Do NOT rename fields
 
 FORMAT:
 
 {
   "title": "Where [thing] comes from",
-  "chain": ["step1", "step2", "step3"],
+  "chain": ["step1", "step2", "step3", "step4", "step5"],
   "nodes": [
     {
       "id": "1",
-      "label": "Name",
+      "label": "Short name",
       "country": "Country",
       "lat": 0.0,
       "lng": 0.0
     }
   ],
   "edges": [
-    {
-      "from": "1",
-      "to": "2"
-    }
+    { "from": "1", "to": "2" }
   ],
-  "surprise": "One surprising fact"
+  "surprise": "A specific, surprising fact"
 }
 
 Query: ${query}
@@ -65,26 +65,24 @@ Query: ${query}
           { role: "system", content: "You are AtlasAI" },
           { role: "user", content: prompt }
         ],
-        temperature: 0.4
+        temperature: 0.5
       })
     });
 
     const data = await response.json();
 
-    // 🔍 Debug: full OpenAI response
     console.log("OPENAI RAW:", JSON.stringify(data));
 
     let content = data.choices?.[0]?.message?.content;
 
     if (!content) {
-      console.log("❌ No content returned");
+      console.log("❌ No AI content");
       return res.status(500).json({ error: "No AI response" });
     }
 
-    // 🔍 Debug: raw AI text
     console.log("AI TEXT:", content);
 
-    // 🧠 Clean common AI issues
+    // 🧠 Clean common AI formatting issues
     content = content
       .replace(/```json/g, "")
       .replace(/```/g, "")
@@ -104,7 +102,16 @@ Query: ${query}
       });
     }
 
-    // ✅ Final response
+    // 🧠 Optional safety checks (prevents bad UI crashes)
+    if (!parsed.nodes || parsed.nodes.length < 3) {
+      console.log("❌ Too few nodes");
+      return res.status(500).json({ error: "Not enough data" });
+    }
+
+    if (!parsed.edges) {
+      parsed.edges = [];
+    }
+
     res.json(parsed);
 
   } catch (err) {
