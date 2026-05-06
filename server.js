@@ -8,8 +8,11 @@ app.use(express.json());
 app.post("/atlas", async (req, res) => {
   const query = req.body.query;
 
+  // 🔍 LOG 1 — check incoming request
+  console.log("QUERY:", query);
+
   const prompt = `
-Return ONLY valid JSON. No markdown. No explanation.
+Return ONLY valid JSON. No markdown.
 
 {
   "title": "",
@@ -50,7 +53,9 @@ Query: ${query}
     const data = await response.json();
     let content = data.choices[0].message.content;
 
-    // 🧠 SAFETY CLEANING (IMPORTANT)
+    // 🔍 LOG 2 — raw AI output (VERY IMPORTANT)
+    console.log("AI RAW:", content);
+
     content = content.replace(/```json/g, "").replace(/```/g, "");
 
     let parsed;
