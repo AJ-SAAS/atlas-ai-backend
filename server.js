@@ -8,26 +8,45 @@ app.use(express.json());
 app.post("/atlas", async (req, res) => {
   const query = req.body.query;
 
-  // 🔍 LOG 1 — check incoming request
+  // 🔍 Debug: incoming request
   console.log("QUERY:", query);
 
   const prompt = `
-Return ONLY valid JSON. No markdown.
+You are AtlasAI.
+
+You MUST return strictly valid JSON.
+
+RULES:
+- No markdown
+- No explanations
+- No text outside JSON
+- No trailing commas
+- All keys must use double quotes
+- Use EXACT structure below
+- edges MUST use "from" and "to"
+- Do NOT rename fields
+
+FORMAT:
 
 {
-  "title": "",
-  "chain": [],
+  "title": "Where [thing] comes from",
+  "chain": ["step1", "step2", "step3"],
   "nodes": [
     {
-      "id": "",
-      "label": "",
-      "country": "",
-      "lat": 0,
-      "lng": 0
+      "id": "1",
+      "label": "Name",
+      "country": "Country",
+      "lat": 0.0,
+      "lng": 0.0
     }
   ],
-  "edges": [],
-  "surprise": ""
+  "edges": [
+    {
+      "from": "1",
+      "to": "2"
+    }
+  ],
+  "surprise": "One surprising fact"
 }
 
 Query: ${query}
@@ -43,20 +62,34 @@ Query: ${query}
       body: JSON.stringify({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "You are Atlas AI" },
+          { role: "system", content: "You are AtlasAI" },
           { role: "user", content: prompt }
         ],
-        temperature: 0.7
+        temperature: 0.4
       })
     });
 
     const data = await response.json();
-    let content = data.choices[0].message.content;
 
-    // 🔍 LOG 2 — raw AI output (VERY IMPORTANT)
-    console.log("AI RAW:", content);
+    // 🔍 Debug: full OpenAI response
+    console.log("OPENAI RAW:", JSON.stringify(data));
 
-    content = content.replace(/```json/g, "").replace(/```/g, "");
+    let content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      console.log("❌ No content returned");
+      return res.status(500).json({ error: "No AI response" });
+    }
+
+    // 🔍 Debug: raw AI text
+    console.log("AI TEXT:", content);
+
+    // 🧠 Clean common AI issues
+    content = content
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .replace(/,\s*}/g, "}")
+      .replace(/,\s*]/g, "]");
 
     let parsed;
 
@@ -64,16 +97,21 @@ Query: ${query}
       parsed = JSON.parse(content);
     } catch (e) {
       console.log("❌ JSON PARSE FAILED:", content);
-      return res.status(500).json({ error: "Bad AI JSON" });
+
+      return res.status(500).json({
+        error: "Invalid JSON from AI",
+        raw: content
+      });
     }
 
+    // ✅ Final response
     res.json(parsed);
 
   } catch (err) {
     console.log("❌ SERVER ERROR:", err);
-    res.status(500).json({ error: "Failed" });
+    res.status(500).json({ error: "Server failed" });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running"));
+app.listen(PORT, () => console.log("🚀 Server running"));
