@@ -123,17 +123,19 @@ Allowed place_id values: ${PORT_IDS.join(", ")}.`;
 // ---------------------------------------------------------------------------
 
 function validate(parsed) {
-  const problems = [];
+  const problems = [];   // anything that makes the route unusable
+  const soft = [];       // things that look off but are still worth showing
   const steps = parsed.steps || [];
 
-  if (steps.length < 5 || steps.length > 9) problems.push(`Need 5 to 8 steps, got ${steps.length}.`);
+  if (steps.length < 3) problems.push(`Need 5 to 8 steps, got ${steps.length}.`);
+  else if (steps.length < 5 || steps.length > 9) soft.push(`Need 5 to 8 steps, got ${steps.length}.`);
 
   // Single origin: all production-type steps must be in one country.
   const productionCountries = new Set(
     steps.filter((s) => ["farm", "mine", "factory", "packhouse"].includes(s.role)).map((s) => normCountry(s.country))
   );
   if (productionCountries.size > 1 && parsed.kind === "commodity") {
-    problems.push(`A commodity must come from one origin country, but steps used: ${[...productionCountries].join(", ")}.`);
+    soft.push(`A commodity must come from one origin country, but steps used: ${[...productionCountries].join(", ")}.`);
   }
 
   // Port steps must use a port id.
@@ -143,16 +145,16 @@ function validate(parsed) {
     }
     if (s.place_id === "none" && !["port_export", "port_import"].includes(s.role)) {
       const ok = coordsMatchCountry(s.country, s.lat, s.lng);
-      if (ok === false) problems.push(`"${s.label}" coordinates are not inside ${s.country}.`);
+      if (ok === false) soft.push(`"${s.label}" coordinates are not inside ${s.country}.`);
     }
   }
 
   // No immediate repeats.
   for (let i = 1; i < steps.length; i++) {
     const key = (s) => (s.place_id !== "none" ? s.place_id : s.label.toLowerCase());
-    if (key(steps[i]) === key(steps[i - 1])) problems.push(`Duplicate consecutive step "${steps[i].label}".`);
+    if (key(steps[i]) === key(steps[i - 1])) soft.push(`Duplicate consecutive step "${steps[i].label}".`);
   }
-  return problems;
+  return { hard: problems, soft };
 }
 
 function toResponse(parsed) {
@@ -248,19 +250,32 @@ app.post("/atlas", async (req, res) => {
     ];
 
     let parsed = await askOpenAI(messages);
-    let problems = validate(parsed);
+    let check = validate(parsed);
 
-    if (problems.length) {
-      console.log("VALIDATION PROBLEMS, RETRYING:", problems);
+    if (check.hard.length || check.soft.length) {
+      const all = [...check.hard, ...check.soft];
+      console.log("VALIDATION PROBLEMS, RETRYING:", all);
       messages.push({ role: "assistant", content: JSON.stringify(parsed) });
-      messages.push({ role: "user", content: `That route has problems. Fix all of them and return the full route again:\n- ${problems.join("\n- ")}` });
-      parsed = await askOpenAI(messages);
-      problems = validate(parsed);
+      messages.push({ role: "user", content: `That route has problems. Fix all of them and return the full route again:\n- ${all.join("\n- ")}` });
+      const retry = await askOpenAI(messages);
+      const retryCheck = validate(retry);
+      // Keep whichever attempt is better.
+      if (retryCheck.hard.length <= check.hard.length) { parsed = retry; check = retryCheck; }
     }
 
-    if (problems.length) {
-      console.log("STILL INVALID:", problems);
+    if (check.hard.length) {
+      console.log("STILL INVALID:", check.hard);
       return res.status(502).json({ error: "Could not build a reliable route for this product." });
+    }
+
+    if (check.soft.length) {
+      // Show the route, but be honest that it is less certain.
+      console.log("SHOWING WITH WARNINGS:", check.soft);
+      parsed.confidence = "low";
+      // Drop immediate duplicate steps.
+      const key = (s) => (s.place_id !== "none" ? s.place_id : s.label.toLowerCase());
+      parsed.steps = parsed.steps.filter((s, i, a) => i === 0 || key(s) !== key(a[i - 1]));
+      if (parsed.steps.length < 3) return res.status(502).json({ error: "Could not build a reliable route for this product." });
     }
 
     const result = toResponse(parsed);
